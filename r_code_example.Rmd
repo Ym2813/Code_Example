@@ -1,0 +1,261 @@
+---
+title: "Code Example from HW"
+author: "Anna Ma"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(viridis)
+library(modelr)
+library(mgcv)
+
+knitr::opts_chunk$set(
+	echo = TRUE,
+	warning = FALSE,
+	fig.width = 8, 
+  fig.height = 6,
+  out.width = "90%"
+)
+
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis"
+)
+
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+```
+
+
+### Problem 1: Homocide Resolution
+
+For this problem, we are interested in data gathered and made public by _The Washington Post_ on homicides in 50 large U.S. cities. 
+
+**Data Cleaning**
+
+For data cleaning:
+
+1. Created a `city_state` variable that combines city with state. This differentiates those cities that have the same name but are actually in different states. 
+2. Changed `victim_age` to numeric
+3. To simplify, filtered out race that is labeled as "Other". 
+4. Created a `resolution` variable, indicating whether the homicide is solved. 
+5. Filtered out the cities that did not report victim race:Dallas, TX; Phoenix, AZ; and Kansas City, MO. Also filtered out Tulsa, AL becuase this city does not exist and it is a wrong entry.
+6. Selected variables `city_state`, `resolution`, `victim_age`, `victim_sex`, and `victim_race`.
+
+```{r data_cleaning, message = FALSE}
+homicide_df = 
+  read_csv("data/homicide-data.csv", na = c("", "NA", "Unknown")) %>% 
+  mutate(
+    city_state = str_c(city, state, sep = ", "),
+    victim_age = as.numeric(victim_age),
+    resolution = case_when(
+      disposition == "Closed without arrest" ~ 0,
+      disposition == "Open/No arrest"        ~ 0,
+      disposition == "Closed by arrest"      ~ 1)
+  ) %>% 
+  filter(!(victim_race == "Other")) %>% 
+  filter(!(city_state %in% c("Tulsa, AL", "Dallas, TX", "Phoenix, AZ", "Kansas City, MO"))) %>% 
+  select(victim_race, victim_sex,victim_age, city_state,disposition,resolution)
+
+homicide_df %>% head(5)%>% knitr::kable(digits = 3)
+```
+
+The resulting data frame has `r nrow(homicide_df)` entries, on variables that include the victim name, race, age, and sex; the date the homicide was reported; and the location of the homicide.
+
+**Overall analysis for proportions of Unsolved Homicide estimates and CIs**
+
+In the next code chunk, I'll group within cities and summarize to produce the total number of homicides and the number that are solved. 
+
+```{r}
+city_homicide_df = 
+  homicide_df %>% 
+  select(city_state, disposition,resolution) %>% 
+  group_by(city_state) %>% 
+  summarize(hom_total = n(),
+            hom_unsolved = sum(resolution == 0))
+
+city_homicide_df %>% head(5)%>% knitr::kable(digits = 3)
+```
+
+Next, I'll use the `prop.test`, and functions in the `broom::tidy` and `purrr` package to obtain estimates and CIs for the proportion of unsolved homicides in each city in my dataset. The table below shows those values.
+
+```{r}
+test_results = 
+  city_homicide_df %>% 
+  mutate(prop_tests = map2(.x = hom_unsolved, .y = hom_total, ~prop.test(x = .x, n = .y)),
+         tidy_tests = map(prop_tests, broom::tidy)) %>% 
+  select(-prop_tests) %>% 
+  unnest(cols = c(tidy_tests)) %>% 
+  select(city_state, estimate, conf.low, conf.high) %>% 
+  mutate(city_state = fct_reorder(city_state, estimate))
+
+test_results %>% head(5) %>% knitr::kable(digits = 3)
+```
+
+Finally, I'll make a plot showing the estimate (and CI) of the proportion of unsolved homicides in each city.
+
+```{r}
+test_results %>% 
+  mutate(city_state = fct_reorder(city_state, estimate)) %>% 
+  ggplot(aes(x = city_state, y = estimate)) + 
+  geom_point() + 
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high)) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+This figure suggests a very wide range in the rate at which homicides are solved -- Chicago is noticeably high and, given the narrowness of the CI, likely to have many homicides. 
+
+**Initial Analysis for Model with Visualization**
+
+For this section, I want to visualize the resolution rate by victim race and sex to see if the resolution rate is potentially associated with the race or sex of the victim. Specifically, I'll plot the density of resolution rate by victim race in the same plot controlling for victim sex, and create a facet to compare the victim sex plot side by side. 
+
+```{r}
+homicide_df %>% 
+  group_by(city_state, victim_sex) %>% 
+  mutate(resolution_rate = sum(resolution == 1)/n()) %>% 
+  distinct(city_state,victim_sex,resolution_rate, victim_race) %>% 
+  filter(victim_sex != "NA") %>% 
+  ggplot(aes(x = resolution_rate, fill = victim_race)) +
+  geom_density(alpha = .5) + 
+  facet_grid(. ~ victim_sex) +
+  theme(legend.position = "bottom")
+```
+
+From the plots, we can see from the plots that when controlling for sex, the resolution for each victim race does not differ from each other too much. It also shows that the distribution of resolution rate based on victim sex is different. Therefore, it might worth to do additional analysis on the resolution rate comparing male victims to female victims.
+
+
+**Logistic Regression**
+
+For the model, my primary goal is to examine whether the resolution status for homicide is different based on the victim's sex.
+
+In this section, I'm fitting a logistic regression model for each of the cities, using `resolved` as the outcome and `victim_age`, `victim_sex`, and `victim_race` as predictors. I'll extract the adjusted odds ratio and CIs for solving homicides comparing male victims to female victims. 
+
+
+```{r glm_all_cities}
+model_results = 
+  homicide_df %>% 
+  nest(data = -city_state) %>% 
+  mutate(
+    models = map(data, ~glm(resolution ~ victim_age + victim_sex + victim_race, 
+                            family = binomial(), data = .x)),
+         tidy_models = map(models, broom::tidy)) %>% 
+  select(-models, -data) %>% 
+  unnest(cols = tidy_models) %>% 
+  mutate(OR = exp(estimate), 
+         OR_CI_upper = exp(estimate + 1.96 * std.error),
+         OR_CI_lower = exp(estimate - 1.96 * std.error)) %>% 
+  filter(term == "victim_sexMale") %>% 
+  select(city_state, OR, OR_CI_lower, OR_CI_upper)
+
+model_results %>%
+  knitr::kable(digits = 3)
+```
+
+
+**Plotting Model Results**
+
+In this section, I'm generating a plot of the estimated ORs and CIs for each city, ordered by magnitude of the OR from smallest to largest. From this plot we see that most cities have odds ratios that are smaller than 1, suggesting that crimes with male victims have smaller odds of resolution compared to crimes with female victims after adjusting for victim age and race. This disparity is strongest in New York. In roughly half of these cities, confidence intervals are narrow and do not contain 1, suggesting a significant difference in resolution rates by sex after adjustment for victim age and race. 
+
+```{r plot}
+model_results %>% 
+  mutate(city_state = fct_reorder(city_state, OR)) %>% 
+  ggplot(aes(x = city_state, y = OR)) + 
+  geom_point() + 
+  geom_errorbar(aes(ymin = OR_CI_lower, ymax = OR_CI_upper)) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+
+### Problem 2: Modeling Baby Weight and Cross Validation
+
+**Data Cleaning**
+
+1. Data Conversion: Convert `babysex`, `frace`, and `mrace` from numeric to factor, and `malform` to logical. 
+
+```{r q2_data_cleaning}
+bwt_df = read_csv("data/birthweight.csv") %>% 
+  janitor::clean_names() %>%
+  mutate(
+    babysex = as.factor(babysex),
+    babysex = fct_recode(babysex, "male" = "1", "female" = "2"),
+    frace = as.factor(frace),
+    frace = fct_recode(frace, "white" = "1", "black" = "2", "asian" = "3", 
+                       "puerto rican" = "4", "other" = "8"),
+    malform = as.logical(malform),
+    mrace = as.factor(mrace),
+    mrace = fct_recode(mrace, "white" = "1", "black" = "2", "asian" = "3", 
+                       "puerto rican" = "4"))
+
+bwt_df %>% head(5)%>%
+  knitr::kable(digits = 3)
+```
+
+**Descriptive and Summary Statistics**
+Here, I'll perform some initial summary statistics and descriptive visualizations before further analysis
+
+```{r}
+skimr::skim(bwt_df) %>% 
+  select(-c(factor.ordered, factor.n_unique, factor.top_counts,numeric.hist)) %>% 
+  knitr::kable(digits=3)
+```
+
+As we can observe from the table, there’s no missing value in the data set. Moreover, `pnumlbw` and `pnumsga` are `r mean(bwt_df$pnumlbw)` for all of their observations, therefore those variables should be not used in the regression analysis.
+
+
+**Model Design**
+
+In this section, I'm proposing a linear regression model for birth weight with a collection of variables that I expect to be associated with the outcome. 
+
+```{r q2_model_selection}
+confound_model = lm(bwt ~ babysex + blength + bhead + gaweeks + parity + smoken, data = bwt_df)
+
+confound_model %>% 
+  broom::tidy()
+```
+
+**Model Diagnostics**
+
+Here, I'm making the residuals vs. fitted value plot. From the plot, we see a cluster of noise for the majority of observations, which is expected for a good-fitting model. However, some predictions are quite far off from the observed values (including a negative fitted value for a very large observation), resulting in a decreasing trend in residuals on the left side of the plot. So, the model appears reasonable but imperfect.
+
+```{r}
+bwt_df %>%
+  add_residuals(confound_model) %>%
+  add_predictions(confound_model) %>%
+  ggplot(aes(x = pred, y = resid)) + 
+  geom_point() + 
+  labs(
+    title = "Plot of residuals against fitted values",
+    x = "Fitted values",
+    y = "Residuals"
+  )
+```
+
+
+**Cross Validation with Two Other Models**
+
+Lastly we use cross validation to compare this model with a simple model containing only `blength` and `gaweeks`, and a complex model containing `bhead`, `blength`, and `babysex` and their interactions. From the violin plot of RMSE, we conclude that our non-simple model slightly outperforms these two alternative models. As expected, the simple model with only `blength` and `gaweeks` has the highest RMSE. 
+
+```{r q2_model_comparison}
+cv_df = 
+  crossv_mc(bwt_df, 100) %>% 
+  mutate(
+    simple_mod = map(train, ~lm(bwt ~ blength + gaweeks, data = .x)),
+    nonsimple_mod = map(train, ~lm(bwt ~ babysex + blength + bhead + gaweeks + parity + smoken, data = .x)),
+    complex_mod =  map(train, ~lm(bwt ~ bhead * blength * babysex, data = .x))) %>% 
+  mutate(
+    rmse_simple = map2_dbl(simple_mod, test, rmse),
+    rmse_nonsimple = map2_dbl(nonsimple_mod, test, rmse),
+    rmse_complex = map2_dbl(complex_mod, test, rmse)) 
+
+cv_df %>% 
+  dplyr::select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") %>% 
+  ggplot(aes(x = model, y = rmse)) + geom_violin()
+```
