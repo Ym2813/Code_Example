@@ -1,4 +1,4 @@
-Code Example from HW
+Code Sample from HW
 ================
 Anna Ma
 
@@ -117,7 +117,7 @@ test_results %>%
   theme(axis.text.x = element_text(angle = 90, hjust = 1))
 ```
 
-<img src="r_code_example_files/figure-gfm/unnamed-chunk-3-1.png" width="90%" />
+<img src="r_code_sample_files/figure-gfm/unnamed-chunk-3-1.png" width="90%" />
 
 This figure suggests a very wide range in the rate at which homicides
 are solved – Chicago is noticeably high and, given the narrowness of the
@@ -143,7 +143,7 @@ homicide_df %>%
   theme(legend.position = "bottom")
 ```
 
-<img src="r_code_example_files/figure-gfm/unnamed-chunk-4-1.png" width="90%" />
+<img src="r_code_sample_files/figure-gfm/unnamed-chunk-4-1.png" width="90%" />
 
 From the plots, we can see from the plots that when controlling for sex,
 the resolution for each victim race does not differ from each other too
@@ -253,7 +253,7 @@ model_results %>%
   theme(axis.text.x = element_text(angle = 90, hjust = 1))
 ```
 
-<img src="r_code_example_files/figure-gfm/plot-1.png" width="90%" />
+<img src="r_code_sample_files/figure-gfm/plot-1.png" width="90%" />
 
 ### Problem 2: Modeling Baby Weight and Cross Validation
 
@@ -383,7 +383,7 @@ bwt_df %>%
   )
 ```
 
-<img src="r_code_example_files/figure-gfm/unnamed-chunk-6-1.png" width="90%" />
+<img src="r_code_sample_files/figure-gfm/unnamed-chunk-6-1.png" width="90%" />
 
 **Cross Validation with Two Other Models**
 
@@ -416,4 +416,4 @@ cv_df %>%
   ggplot(aes(x = model, y = rmse)) + geom_violin()
 ```
 
-<img src="r_code_example_files/figure-gfm/q2_model_comparison-1.png" width="90%" />
+<img src="r_code_sample_files/figure-gfm/q2_model_comparison-1.png" width="90%" />
